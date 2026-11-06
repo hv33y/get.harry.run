@@ -1,3 +1,4 @@
+# get.harry.run link list
 # Format:  number | slug | Name | URL | pattern (optional)
 # - number: the number you pick in the interactive menus (keep them unique, 1,2,3...)
 # - slug: short name for get.harry.run/<slug>  (lowercase, no spaces). get.harry.run/<number> works too.
