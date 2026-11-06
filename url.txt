@@ -1,0 +1,12 @@
+# Format:  number | slug | Name | URL | pattern (optional)
+# - number: the number you pick in the interactive menus (keep them unique, 1,2,3...)
+# - slug: short name for get.harry.run/<slug>  (lowercase, no spaces). get.harry.run/<number> works too.
+# - pattern (e.g. vlc-*-win64.exe): the daily GitHub Action opens the URL's folder, finds the
+#   newest matching file and rewrites the URL for you. GitHub release URLs work too.
+# - lines starting with # and blank lines are ignored; keep "|" out of names.
+# Add a new app = add one line and commit. Cloudflare redeploys automatically.
+
+1 | onedrive | OneDrive Setup | https://go.microsoft.com/fwlink/p/?LinkID=2182910&clcid=0x409&culture=en-us&country=us
+2 | git | Git for Windows | https://github.com/git-for-windows/git/releases/latest/download/Git-2.47.1-64-bit.exe | Git-*-64-bit.exe
+3 | 7zip | 7-Zip | https://www.7-zip.org/a/7z2409-x64.exe | 7z*-x64.exe
+4 | vlc | VLC Media Player | https://get.videolan.org/vlc/last/win64/vlc-3.0.24-win64.exe | vlc-*-win64.exe
