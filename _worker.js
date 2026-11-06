@@ -9,8 +9,8 @@ const items = raw.split('\n')
   .map(l => l.trim())
   .filter(l => l && !l.startsWith('#'))
   .map(l => {
-    const [num, slug, name, url] = l.split('|').map(s => s.trim());
-    return { num, slug, name, url };
+    const [num, slug, name, url, pattern, silent] = l.split('|').map(s => s.trim());
+    return { num, slug, name, url, pattern: pattern || '', silent: silent || '' };
   })
   .filter(i => i.num && i.slug && i.url)
   .sort((a, b) => Number(a.num) - Number(b.num));
@@ -28,16 +28,16 @@ export default {
     const u = new URL(req.url);
     const path = u.pathname.replace(/\/+$/, '') || '/';
     const ua = req.headers.get('user-agent') || '';
-    const cli = /curl|wget|httpie|fetch|powershell|python-requests|go-http/i.test(ua) ||
+    const ps = /PowerShell/i.test(ua);
+    const cli = /curl|wget|httpie|fetch|python-requests|go-http/i.test(ua) ||
       !(req.headers.get('accept') || '').includes('text/html');
 
-    if (path === '/') return cli ? text(menu()) : html(page());
+    // One address for everything: PowerShell -> Windows installer menu, curl/wget -> shell menu, browser -> page
+    if (path === '/') return ps ? text(powershellScript()) : cli ? text(shellScript()) : html(page());
     if (path === '/url.txt') return text(raw);
     if (path === '/list') return text(menu());
-    if (path === '/raw') return text(items.map(i => [i.num, i.slug, i.name].join('|')).join('\n') + '\n');
-    if (path === '/api.json') return json(items.map(i => ({ ...i, proxy: proxied(i), short: `${HOST}/${i.slug}` })));
-    if (path === '/i') return text(shellScript());
-    if (path === '/w') return text(powershellScript());
+    if (path === '/raw') return text(items.map(i => [i.num, i.slug, i.name, i.silent].join('|')).join('\n') + '\n');
+    if (path === '/api.json') return json(items.map(i => ({ num: i.num, slug: i.slug, name: i.name, url: i.url, proxy: proxied(i), short: `${HOST}/${i.slug}` })));
 
     // /<slug or number> -> via dl.harry.run proxy (default) | /d/<slug> -> straight to vendor | /u/<slug> -> print real URL
     let key = path.slice(1), mode = u.searchParams.has('direct') ? 'direct' : 'proxy';
@@ -51,7 +51,7 @@ export default {
   }
 };
 
-// ---------- curl / wget menu ----------
+// ---------- plain list (get.harry.run/list) ----------
 function menu() {
   const w = Math.max(...items.map(i => i.slug.length)) + 2;
   const rows = items.map(i => `  ${i.num.padStart(2)}  ${i.slug.padEnd(w)}${i.name}`).join('\n');
@@ -59,16 +59,14 @@ function menu() {
 
 ${rows}
 
-Download (file name and extension come from the proxy)
+Download one (file name and extension come from the proxy)
   curl -LOJ ${HOST}/<name or number>
   wget --content-disposition ${HOST}/<name or number>
   curl -LOJ ${HOST}/d/<name>          skip the proxy, go straight to the vendor
 
-Pick several from a numbered menu
-  Linux/macOS   bash <(curl -fsSL ${HOST}/i)
-  Windows       irm ${HOST}/w | iex
-
-Other: /list  /api.json  /url.txt  /u/<name> (print the real URL)
+Pick several from a menu
+  Windows (downloads and installs)   irm ${HOST} | iex
+  Linux / macOS                      curl -fsSL ${HOST} | bash
 `;
 }
 
@@ -76,6 +74,7 @@ Other: /list  /api.json  /url.txt  /u/<name> (print the real URL)
 function shellScript() {
   return String.raw`#!/usr/bin/env bash
 # get.harry.run interactive downloader
+# Run it with:  curl -fsSL __HOST__ | bash    (or: wget -qO- __HOST__ | bash)
 H="__HOST__"
 if command -v curl >/dev/null 2>&1; then
   G(){ curl -fsSL "$1"; }
@@ -87,7 +86,7 @@ else echo "Need curl or wget."; exit 1; fi
 
 B=$'\033[1m'; C=$'\033[36m'; X=$'\033[0m'
 ORDER=""
-while IFS='|' read -r num s n; do
+while IFS='|' read -r num s n _; do
   [ -z "$num" ] && continue
   ORDER="$ORDER $num"; S[$num]=$s; N[$num]=$n
 done < <(G "$H/raw")
@@ -107,96 +106,130 @@ for p in $pick; do
   else echo "Skipping invalid choice: $p"; fi
 done
 echo; echo "Done. Files are in $(pwd)"
-`.replace('__HOST__', HOST).replaceAll('@{', '$' + '{');
+`.replaceAll('__HOST__', HOST).replaceAll('@{', '$' + '{');
 }
 
-// ---------- interactive: Windows PowerShell (irm get.harry.run/w | iex) ----------
+// ---------- interactive: Windows PowerShell (irm https://get.harry.run | iex) ----------
 function powershellScript() {
-  return String.raw`# get.harry.run interactive downloader (Windows)
+  return String.raw`# get.harry.run - pick apps by number, download and install (Windows)
 $H = "__HOST__"
 if (-not (Get-Command curl.exe -ErrorAction SilentlyContinue)) { Write-Host "curl.exe not found (it ships with Windows 10 and 11)." -ForegroundColor Red; return }
 $items = [ordered]@{}
 foreach ($r in ((Invoke-RestMethod "$H/raw") -split "\r?\n")) {
-  if ($r.Trim()) { $p = $r.Split('|'); $items[$p[0]] = $p }
+  if ($r.Trim()) { $p = $r.Split('|', 4); $items[$p[0]] = $p }
 }
 Write-Host ""; Write-Host "get.harry.run" -ForegroundColor Cyan; Write-Host ""
 foreach ($k in $items.Keys) { Write-Host ("  {0,2}  {1}" -f $k, $items[$k][2]) }
 Write-Host ""
 $pick = Read-Host "Pick number(s), e.g. 1 3 5 (q = quit)"
 if (-not $pick -or $pick -eq 'q') { return }
+$ans = Read-Host "Install after download? [Y/n] (n = just save the files here)"
+$install = $ans -notmatch '^[nN]'
+$here = (Get-Location).Path
+$dir = $here
+if ($install) { $dir = Join-Path $env:TEMP "get-harry-run"; New-Item -ItemType Directory -Force $dir | Out-Null }
+
 foreach ($n in ($pick -split "[\s,]+" | Where-Object { $_ })) {
   if (-not $items.Contains($n)) { Write-Host "Skipping invalid choice: $n" -ForegroundColor Yellow; continue }
-  Write-Host ""; Write-Host ("-> " + $items[$n][2]) -ForegroundColor Cyan
-  curl.exe -fLOJ --progress-bar ("$H/" + $items[$n][1])
-  if ($LASTEXITCODE -ne 0) { Write-Host ("   failed: " + $items[$n][2]) -ForegroundColor Red }
+  $it = $items[$n]
+  Write-Host ""; Write-Host ("-> " + $it[2]) -ForegroundColor Cyan
+  if ($install) { Get-ChildItem $dir -Force | Remove-Item -Recurse -Force }
+  Push-Location $dir
+  curl.exe -fLOJ --progress-bar ("$H/" + $it[1])
+  $ok = ($LASTEXITCODE -eq 0)
+  Pop-Location
+  if (-not $ok) { Write-Host "   download failed" -ForegroundColor Red; continue }
+  if (-not $install) { continue }
+
+  $f = Get-ChildItem $dir -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  $silent = $it[3]
+  if ($f.Extension -eq '.msi') { $exe = 'msiexec.exe'; $a = '/i "' + $f.FullName + '" /qn /norestart' }
+  else { $exe = $f.FullName; $a = $silent }
+  if ($silent) { Write-Host "   installing (approve the admin prompt)..." } else { Write-Host "   opening the installer, finish it in the window..." }
+  try {
+    $sp = @{ FilePath = $exe; Wait = $true; PassThru = $true; Verb = 'RunAs' }
+    if ($a) { $sp.ArgumentList = $a }
+    $proc = Start-Process @sp
+    if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) { Write-Host "   done" -ForegroundColor Green }
+    else { Write-Host ("   installer exited with code " + $proc.ExitCode) -ForegroundColor Yellow }
+  } catch { Write-Host ("   could not run the installer: " + $_.Exception.Message) -ForegroundColor Red }
 }
-Write-Host ""; Write-Host ("Done. Files are in " + (Get-Location)) -ForegroundColor Green
-`.replace('__HOST__', HOST);
+if ($install) { Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue }
+Write-Host ""; Write-Host "Finished." -ForegroundColor Green
+`.replaceAll('__HOST__', HOST);
 }
 
 // ---------- WebUI ----------
 function page() {
-  const cards = items.map(i => `
-<article class="card" data-q="${esc((i.name + ' ' + i.slug + ' ' + i.num).toLowerCase())}">
-  <header><span class="num">${esc(i.num)}</span><h2>${esc(i.name)}</h2></header>
-  <div class="cmd"><code data-cmd>curl -LOJ ${HOST}/${esc(i.slug)}</code><button class="ghost" data-copy>Copy</button></div>
+  const rows = items.map(i => `
+<li class="item" data-q="${esc((i.name + ' ' + i.slug + ' ' + i.num).toLowerCase())}">
   <div class="row">
-    <a class="btn" href="/${esc(i.slug)}">Download</a>
-    <a class="btn alt" href="/d/${esc(i.slug)}">Direct link</a>
-    <select aria-label="Command type" data-slug="${esc(i.slug)}"><option value="curl">curl</option><option value="wget">wget</option><option value="direct">curl, no proxy</option></select>
+    <span class="n">${esc(i.num)}</span>
+    <div class="who"><div class="name">${esc(i.name)}</div><div class="slug">get.harry.run/${esc(i.slug)}</div></div>
+    <a class="dl" href="/${esc(i.slug)}">Download</a>
   </div>
-</article>`).join('');
+  <div class="cmds">
+    <code title="Click to copy">curl -LOJ ${HOST}/${esc(i.slug)}</code>
+    <code title="Click to copy">wget --content-disposition ${HOST}/${esc(i.slug)}</code>
+    <code title="Click to copy">curl -LOJ ${HOST}/d/${esc(i.slug)}</code>
+  </div>
+</li>`).join('');
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>get.harry.run</title><meta name="color-scheme" content="light dark">
 <style>
-:root{--bg:#eef3f8;--panel:#fff;--ink:#14213d;--mute:#5b6b85;--line:#d5deea;--acc:#2457f5;--accink:#fff;--term:#0f1b33;--termink:#bfe3ff}
-@media (prefers-color-scheme:dark){:root{--bg:#0e1626;--panel:#16233b;--ink:#e8eefb;--mute:#93a4c3;--line:#26375a;--acc:#6f95ff;--accink:#0b1220;--term:#091120;--termink:#bfe3ff}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif}
-main{max-width:1040px;margin:0 auto;padding:48px 20px 80px}
-h1{font-size:clamp(2.2rem,6vw,3.6rem);letter-spacing:-.03em;margin:0 0 8px;font-weight:800}
-.lead{color:var(--mute);max-width:56ch;margin:0 0 28px}
-.term{background:var(--term);color:var(--termink);border-radius:14px;padding:6px 20px;font:14.5px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.term div{display:flex;gap:14px;align-items:center;justify-content:space-between;padding:12px 0;flex-wrap:wrap}
-.term div+div{border-top:1px solid #1f3358}
-.term b{color:#fff;font-weight:600}.term small{display:block;color:#7f9bc4;font-size:12.5px}
-.term button{background:var(--acc);color:var(--accink);border:0;border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer}
-.bar{margin:30px 0 18px}
-input[type=search]{width:100%;max-width:420px;padding:11px 14px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:16px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:14px}
-.card[hidden]{display:none}
-.card header{display:flex;gap:12px;align-items:center}
-.card h2{font-size:1.1rem;margin:0}
-.num{min-width:34px;height:34px;display:grid;place-items:center;border-radius:9px;background:var(--acc);color:var(--accink);font:700 15px ui-monospace,Menlo,Consolas,monospace}
-.cmd{display:flex;gap:8px;align-items:center;background:var(--term);border-radius:8px;padding:8px 10px}
-.cmd code{color:var(--termink);font:13px ui-monospace,Menlo,Consolas,monospace;overflow-x:auto;white-space:nowrap;flex:1}
-.ghost{background:transparent;color:var(--termink);border:1px solid #3a5280;border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;font-size:.85rem}
-.row{display:flex;gap:8px;flex-wrap:wrap}
-.btn{background:var(--acc);color:var(--accink);text-decoration:none;font-weight:700;padding:8px 14px;border-radius:8px;font-size:.92rem}
-.btn.alt{background:transparent;color:var(--acc);border:1px solid var(--acc)}
-select{margin-left:auto;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:.88rem}
+:root{--bg:#f4f7f7;--ink:#10242b;--mute:#5d7378;--line:#d7e2e2;--code:#e4edee;--acc:#0a7b83;--accink:#fff}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1a1c;--ink:#e6f1f1;--mute:#8aa5a8;--line:#223436;--code:#152527;--acc:#4fcfc6;--accink:#06201f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Segoe UI Variable Text","Segoe UI",ui-sans-serif,system-ui,-apple-system,Roboto,sans-serif}
+main{max-width:760px;margin:0 auto;padding:72px 24px 96px}
+h1{margin:0;font-size:clamp(2.6rem,9vw,4.8rem);line-height:1;font-weight:800;letter-spacing:-.045em}
+.sub{margin:16px 0 40px;color:var(--mute);max-width:42ch}
+.tools{display:flex;gap:10px;margin-bottom:22px}
+input[type=search]{flex:1;min-width:0;padding:11px 14px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--ink);font:inherit}
+input[type=search]::placeholder{color:var(--mute)}
+.tg{padding:0 16px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--ink);font:inherit;cursor:pointer}
+.tg[aria-pressed=true]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.termbox{display:none;margin:0 0 26px;padding:16px 18px;border-radius:12px;background:var(--code)}
+.termbox p{margin:0 0 10px;color:var(--mute);font-size:.92rem}
+.line{display:grid;grid-template-columns:110px 1fr;gap:10px;align-items:center;padding:5px 0}
+.line span{color:var(--mute);font-size:.9rem}
+body.term .termbox,body.term .cmds{display:block}
+code{font:13px/1.5 ui-monospace,"Cascadia Code",SFMono-Regular,Menlo,Consolas,monospace;cursor:pointer;overflow-wrap:anywhere}
+ol{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
+.item{border-bottom:1px solid var(--line)}
+.item[hidden]{display:none}
+.row{display:grid;grid-template-columns:72px 1fr auto;align-items:center;gap:6px;padding:20px 0}
+.n{font-size:2.6rem;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;color:transparent;-webkit-text-stroke:1.5px var(--acc)}
+.item:hover .n{color:var(--acc)}
+.name{font-size:1.18rem;font-weight:650;letter-spacing:-.01em}
+.slug{color:var(--mute);font-size:.86rem}
+.dl{background:var(--acc);color:var(--accink);text-decoration:none;font-weight:700;padding:10px 20px;border-radius:10px}
+.dl:hover{filter:brightness(1.08)}
+.cmds{display:none;padding:0 0 20px 78px}
+.cmds code{display:block;margin-top:6px;padding:8px 12px;border-radius:8px;background:var(--code)}
 :focus-visible{outline:3px solid var(--acc);outline-offset:2px}
-.empty{display:none;color:var(--mute);padding:30px 0}footer{margin-top:40px;color:var(--mute);font-size:.9rem}footer a{color:var(--acc)}
+.empty{display:none;color:var(--mute);padding:28px 0}
+footer{margin-top:36px;color:var(--mute);font-size:.88rem}footer a{color:var(--ink)}
+@media (max-width:520px){.row{grid-template-columns:48px 1fr auto}.n{font-size:1.9rem}.cmds{padding-left:54px}.line{grid-template-columns:1fr}.dl{padding:9px 14px}}
 </style></head><body><main>
 <h1>get.harry.run</h1>
-<p class="lead">Short links for the installers I use. Click to download, copy a command, or pick several by number in a terminal.</p>
-<div class="term">
-<div><span><b>irm ${HOST}/w | iex</b><small>Windows PowerShell: numbered menu, type 1 3 5 to grab several.</small></span><button data-copy-text="irm ${HOST}/w | iex">Copy</button></div>
-<div><span><b>bash &lt;(curl -fsSL ${HOST}/i)</b><small>Linux and macOS: same menu. Falls back to wget.</small></span><button data-copy-text="bash <(curl -fsSL ${HOST}/i)">Copy</button></div>
+<p class="sub">The installers I use. Pick one and it downloads with the right file name.</p>
+<div class="tools"><input type="search" id="q" placeholder="Search" aria-label="Search apps"><button class="tg" id="tg" aria-pressed="false">Terminal</button></div>
+<div class="termbox">
+<p>Type several numbers at once, like 1 3 4. On Windows it also installs them.</p>
+<div class="line"><span>Windows</span><code title="Click to copy">irm ${HOST} | iex</code></div>
+<div class="line"><span>Linux / macOS</span><code title="Click to copy">curl -fsSL ${HOST} | bash</code></div>
 </div>
-<div class="bar"><input type="search" id="q" placeholder="Search apps" aria-label="Search apps"></div>
-<section class="grid" id="g">${cards}</section><p class="empty" id="e">Nothing matches. Clear the search.</p>
-<footer>${items.length} links. <a href="/api.json">JSON</a> · <a href="/list">Plain text</a></footer></main>
+<ol>${rows}</ol><p class="empty" id="e">Nothing matches that search.</p>
+<footer>${items.length} apps · <a href="/list">plain list</a> · <a href="/api.json">json</a></footer>
+</main>
 <script>
-const H=${JSON.stringify(HOST)};
-const q=document.getElementById('q'),cards=[...document.querySelectorAll('.card')];
-q.oninput=()=>{let n=0;cards.forEach(c=>{const ok=c.dataset.q.includes(q.value.toLowerCase());c.hidden=!ok;if(ok)n++});document.getElementById('e').style.display=n?'none':'block'};
-async function copy(t,b){try{await navigator.clipboard.writeText(t)}catch(e){}const o=b.textContent;b.textContent='Copied';setTimeout(()=>b.textContent=o,1200)}
-document.querySelectorAll('[data-copy-text]').forEach(b=>b.onclick=()=>copy(b.dataset.copyText,b));
-cards.forEach(c=>{const code=c.querySelector('[data-cmd]'),sel=c.querySelector('select'),s=sel.dataset.slug;
-sel.onchange=()=>{code.textContent={curl:'curl -LOJ '+H+'/'+s,wget:'wget --content-disposition '+H+'/'+s,direct:'curl -LOJ '+H+'/d/'+s}[sel.value]};
-c.querySelector('[data-copy]').onclick=e=>copy(code.textContent,e.target)});
+var q=document.getElementById('q'),items=[].slice.call(document.querySelectorAll('.item')),tg=document.getElementById('tg');
+q.oninput=function(){var n=0;items.forEach(function(c){var ok=c.dataset.q.indexOf(q.value.toLowerCase())>-1;c.hidden=!ok;if(ok)n++});document.getElementById('e').style.display=n?'none':'block'};
+tg.onclick=function(){var on=document.body.classList.toggle('term');tg.setAttribute('aria-pressed',on)};
+[].slice.call(document.querySelectorAll('code')).forEach(function(c){c.onclick=function(){
+  var t=c.textContent;try{navigator.clipboard.writeText(t)}catch(e){}c.textContent='Copied';setTimeout(function(){c.textContent=t},900)}});
 </script></body></html>`;
 }
