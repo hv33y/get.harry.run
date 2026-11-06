@@ -9,5 +9,5 @@
 
 1 | onedrive | OneDrive Setup | https://go.microsoft.com/fwlink/p/?LinkID=2182910&clcid=0x409&culture=en-us&country=us
 2 | git | Git for Windows | https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.4/Git-2.56.0.4-64-bit.exe | Git-*-64-bit.exe
-3 | 7zip | 7-Zip | https://www.7-zip.org/a/7z2409-x64.exe | 7z*-x64.exe
+3 | 7zip | 7-Zip | https://github.com/ip7z/7zip/releases/download/26.05/7z2605-x64.exe | 7z*-x64.exe
 4 | vlc | VLC Media Player | https://get.videolan.org/vlc/last/win64/vlc-3.0.24-win64.exe | vlc-*-win64.exe
