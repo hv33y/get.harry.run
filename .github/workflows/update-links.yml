@@ -1,0 +1,26 @@
+name: Update download links
+
+on:
+  schedule:
+    - cron: "17 5 * * *"   # daily
+  workflow_dispatch:        # "Run workflow" button in the Actions tab
+
+permissions:
+  contents: write           # lets the run commit url.txt back to the repo
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refresh links
+        run: python3 .github/workflows/update_urls.py
+
+      - name: Commit if changed
+        run: |
+          if git diff --quiet -- url.txt; then echo "No changes"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Update download links"
+          git push
