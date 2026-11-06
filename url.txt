@@ -5,10 +5,12 @@
 # - pattern (optional): e.g. vlc-*-win64.exe. The daily GitHub Action finds the newest matching file
 #   in the URL's folder (or the repo's latest release) and rewrites the URL for you.
 # - silent install args (optional): used by the Windows installer menu. Leave empty to open the normal installer.
+# - Tweaks: write  cmd: <PowerShell command>  instead of a URL. The Windows menu runs it, then restarts Explorer.
 # - Leave a field empty by writing nothing between the bars. Keep "|" out of names.
 # Add a new app = add one line and commit.
 
 1 | onedrive | OneDrive Setup | https://go.microsoft.com/fwlink/p/?LinkID=2182910&clcid=0x409&culture=en-us&country=us | | /silent
 2 | git | Git for Windows | https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.4/Git-2.56.0.4-64-bit.exe | Git-*-64-bit.exe | /VERYSILENT /NORESTART
 3 | 7zip | 7-Zip | https://www.7-zip.org/a/7z2409-x64.exe | 7z*-x64.exe | /S
-4 | vlc | VLC Media Player | https://mirror.csclub.uwaterloo.ca/vlc/vlc/3.0.24/win64/vlc-3.0.24-win64.exe | vlc-*-win64.exe | /S
+4 | vlc | VLC Media Player | https://get.videolan.org/vlc/last/win64/vlc-3.0.24-win64.exe | vlc-*-win64.exe | /S
+5 | classicmenu | Windows 11 classic right-click menu | cmd: reg add "HKCU\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32" /f /ve
