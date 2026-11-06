@@ -1,0 +1,5 @@
+name = "get-harry-run"          # must match your Worker's name in the Cloudflare dashboard
+main = "_worker.js"
+compatibility_date = "2024-11-01"
+
+routes = [{ pattern = "get.harry.run", custom_domain = true }]
