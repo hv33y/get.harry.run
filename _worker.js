@@ -48,7 +48,7 @@ export default {
 
     // Auto-setup ghr helper function into user's PowerShell profile
     if (['/profile', '/prof', '/setup'].includes(path)) {
-      const profileCode = `if (-not (Test-Path $PROFILE)) { New-Item -Path $PROFILE -Type File -Force | Out-Null }; if ((Get-Content $PROFILE -Raw -ErrorAction SilentlyContinue) -notmatch 'function ghr') { Add-Content -Path $PROFILE -Value "\`nfunction ghr { param(\\\\$apps) if (\\\\$apps) { irm \\"${HOST}/\\\\$apps\\" | iex } else { irm \\"${HOST}\\" | iex } }" }; Write-Host "ghr command added to your PowerShell profile! You can now just type 'ghr' or 'ghr 7' anytime." -ForegroundColor Green`;
+      const profileCode = `if (-not (Test-Path $PROFILE)) { New-Item -Path $PROFILE -Type File -Force | Out-Null }\nif ((Get-Content $PROFILE -Raw -ErrorAction SilentlyContinue) -notmatch 'function ghr') {\n  Add-Content -Path $PROFILE -Value 'function ghr { param($apps) if ($apps) { irm "https://get.harry.run/$apps" | iex } else { irm "https://get.harry.run" | iex } }'\n}\n. $PROFILE\nWrite-Host "ghr command added to your PowerShell profile! Type 'ghr' or 'ghr 7' anytime." -ForegroundColor Green\n`;
       return text(profileCode);
     }
 
