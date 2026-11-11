@@ -14,4 +14,4 @@
 3 | 7zip | 7-Zip | https://www.7-zip.org/a/7z2409-x64.exe | 7z*-x64.exe | /S
 4 | vlc | VLC Media Player | https://get.videolan.org/vlc/last/win64/vlc-3.0.24-win64.exe | vlc-*-win64.exe | /S
 5 | classicmenu | Windows 11 classic right-click menu | cmd: reg add "HKCU\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32" /f /ve
-6 | telegram | Telegram | https://telegram.org/dl/desktop/win64 | | /S
+6 | telegram | Telegram | https://telegram.org/dl/desktop/win64 | | /VERYSILENT /NORESTART
