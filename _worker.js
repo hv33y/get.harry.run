@@ -38,11 +38,20 @@ export default {
 
     // One address for everything: PowerShell -> Windows installer menu, curl/wget -> shell menu, browser -> page
     if (path === '/') return ps ? text(powershellScript()) : cli ? text(shellScript()) : html(page());
-    if (path === '/all') {
-      if (ps) return text(powershellScript(true));
-      if (!cli) return Response.redirect(HOST + '/', 302);
-      return text(shellScript(true));
+    
+    // Quick aliases for running installer script via short endpoints (e.g. iwr get.harry.run/i|iex)
+    if (['/i', '/go', '/ghr', '/r'].includes(path)) return text(powershellScript());
+    if (['/ia', '/all', '/alla'].includes(path)) {
+      if (ps || cli) return text(powershellScript(true));
+      return Response.redirect(HOST + '/', 302);
     }
+
+    // Auto-setup ghr helper function into user's PowerShell profile
+    if (['/profile', '/prof', '/setup'].includes(path)) {
+      const profileCode = `if (-not (Test-Path $PROFILE)) { New-Item -Path $PROFILE -Type File -Force | Out-Null }; if ((Get-Content $PROFILE -Raw -ErrorAction SilentlyContinue) -notmatch 'function ghr') { Add-Content -Path $PROFILE -Value "\`nfunction ghr { param(\\\$apps) if (\\\$apps) { irm \\"${HOST}/\\\$apps\\" | iex } else { irm \\"${HOST}\\" | iex } }" }; Write-Host "ghr command added to your PowerShell profile! You can now just type 'ghr' or 'ghr 7' anytime." -ForegroundColor Green`;
+      return text(profileCode);
+    }
+
     if (path === '/url.txt') return text(raw);
     if (path === '/list') return text(menu());
     if (path === '/raw') return text(items.map(i => [i.num, i.slug, i.name, i.silent, i.cmd].join('|')).join('\n') + '\n');
@@ -77,8 +86,8 @@ Download one (file name and extension come from the proxy)
   curl -LOJ ${HOST}/d/<name>          skip the proxy, go straight to the vendor
 
 Pick several from a menu
-  Windows (downloads and installs)   irm ${HOST} | iex
-  Windows, install everything        irm ${HOST}/all | iex
+  Windows (downloads and installs)   iwr ${HOST}/i|iex  or  irm ${HOST} | iex
+  Windows, install everything        iwr ${HOST}/ia|iex  or  irm ${HOST}/all | iex
   Linux / macOS                      curl -fsSL ${HOST} | bash
   Linux / macOS, download everything curl -fsSL ${HOST}/all | bash
 `;
@@ -129,7 +138,7 @@ echo; echo "Done. Files are in $(pwd)"
 `.replaceAll('__HOST__', HOST).replaceAll('__ALL__', all ? '1' : '0').replaceAll('@{', '$' + '{');
 }
 
-// ---------- interactive: Windows PowerShell (irm https://get.harry.run | iex) ----------
+// ---------- interactive: Windows PowerShell (iwr get.harry.run/i|iex) ----------
 function powershellScript(all = false) {
   return String.raw`# get.harry.run - pick apps by number, download and install (Windows)
 $H = "__HOST__"
@@ -189,7 +198,7 @@ Write-Host ""; Write-Host "Finished." -ForegroundColor Green
 const ASK_ALL = String.raw`$admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $admin) {
   Write-Host "Opening an admin window (one approval for everything)..." -ForegroundColor Yellow
-  Start-Process powershell -Verb RunAs -ArgumentList '-NoExit', '-Command', 'irm __HOST__/all | iex'
+  Start-Process powershell -Verb RunAs -ArgumentList '-NoExit', '-Command', 'iwr __HOST__/ia|iex'
   return
 }
 Write-Host "Installing everything..." -ForegroundColor Cyan
@@ -264,8 +273,9 @@ footer{margin-top:36px;color:var(--mute);font-size:.88rem}footer a{color:var(--i
 <div class="tools"><input type="search" id="q" placeholder="Search" aria-label="Search apps"><button class="tg" id="tg" aria-pressed="false">Terminal</button></div>
 <div class="termbox">
 <p>In the menu type several numbers, like 1 3 4, or all. On Windows it installs them.</p>
-<div class="line"><span>Windows</span><code title="Click to copy">irm ${HOST} | iex</code></div>
-<div class="line"><span>Windows, all</span><code title="Click to copy">irm ${HOST}/all | iex</code></div>
+<div class="line"><span>Windows</span><code title="Click to copy">iwr get.harry.run/i|iex</code></div>
+<div class="line"><span>Windows, all</span><code title="Click to copy">iwr get.harry.run/ia|iex</code></div>
+<div class="line"><span>One-time Setup</span><code title="Click to copy">iwr get.harry.run/prof|iex</code></div>
 <div class="line"><span>Linux / macOS</span><code title="Click to copy">curl -fsSL ${HOST} | bash</code></div>
 </div>
 <ol>${rows}</ol><p class="empty" id="e">Nothing matches that search.</p>
