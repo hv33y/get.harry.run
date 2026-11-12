@@ -38,17 +38,32 @@ export default {
 
     // One address for everything: PowerShell -> Windows installer menu, curl/wget -> shell menu, browser -> page
     if (path === '/') return ps ? text(powershellScript()) : cli ? text(shellScript()) : html(page());
-    
-    // Quick aliases for running installer script via short endpoints (e.g. iwr get.harry.run/i|iex)
-    if (['/i', '/go', '/ghr', '/r'].includes(path)) return text(powershellScript());
-    if (['/ia', '/all', '/alla'].includes(path)) {
-      if (ps || cli) return text(powershellScript(true));
-      return Response.redirect(HOST + '/', 302);
+
+    // Short aliases for PowerShell (e.g. iwr get.harry.run/i|iex)
+    if (['/i', '/go', '/r'].includes(path)) return text(powershellScript());
+    if (['/ia', '/all'].includes(path)) {
+      if (ps) return text(powershellScript(true));
+      if (!cli) return Response.redirect(HOST + '/', 302);
+      return text(shellScript(true));
     }
 
-    // Auto-setup ghr helper function into user's PowerShell profile
+    // One-time PowerShell profile setup: iwr get.harry.run/prof|iex
     if (['/profile', '/prof', '/setup'].includes(path)) {
-      const profileCode = `if (-not (Test-Path $PROFILE)) { New-Item -Path $PROFILE -Type File -Force | Out-Null }\nif ((Get-Content $PROFILE -Raw -ErrorAction SilentlyContinue) -notmatch 'function harry') {\n  Add-Content -Path $PROFILE -Value 'function harry { param($apps) if ($apps) { irm "https://get.harry.run/$apps" | iex } else { irm "https://get.harry.run" | iex } }'\n}\n. $PROFILE\nWrite-Host "harry command added to your PowerShell profile! Type 'harry' or 'harry 7' anytime." -ForegroundColor Green\n`;
+      const fn = `function harry { param([Parameter(ValueFromRemainingArguments)]$apps) if (-not $apps) { irm "${HOST}" | iex; return }; $q = ($apps -join ","); irm "${HOST}/$q?run=1" | iex }`;
+      const profileCode = [
+        `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force`,
+        `if (-not (Test-Path $PROFILE)) { New-Item -Path $PROFILE -Type File -Force | Out-Null }`,
+        `$c = Get-Content $PROFILE -Raw -ErrorAction SilentlyContinue`,
+        `if ($c -notmatch 'Remove-Item Alias:wget') { Add-Content -Path $PROFILE -Value 'if (Test-Path Alias:wget) { Remove-Item Alias:wget }' }`,
+        `if ($c -match 'function harry') {`,
+        `  $c = $c -replace 'function harry\\s*\\{[^\\r\\n]*\\}', '${fn}'`,
+        `  Set-Content -Path $PROFILE -Value $c.Trim()`,
+        `} else {`,
+        `  Add-Content -Path $PROFILE -Value '${fn}'`,
+        `}`,
+        `. $PROFILE`,
+        `Write-Host "Ready! Type 'harry', 'harry 7', 'harry wget', or 'harry 1 3 4' anytime." -ForegroundColor Green`
+      ].join('\n') + '\n';
       return text(profileCode);
     }
 
@@ -59,9 +74,17 @@ export default {
 
     // /<slug or number> -> via dl.harry.run proxy (default) | /d/<slug> -> straight to vendor | /u/<slug> -> print real URL
     const browser = (req.headers.get('accept') || '').includes('text/html');
-    let key = path.slice(1), mode = (u.searchParams.has('direct') || (browser && !BROWSER_PROXY)) ? 'direct' : 'proxy';
+    let key = decodeURIComponent(path.slice(1)), mode = (u.searchParams.has('direct') || (browser && !BROWSER_PROXY)) ? 'direct' : 'proxy';
     if (key.startsWith('d/')) { key = key.slice(2); mode = 'direct'; }
     else if (key.startsWith('u/')) { key = key.slice(2); mode = 'print'; }
+
+    // Direct multi-app or single-app execution from the `harry` PowerShell function (?run=1)
+    if (u.searchParams.has('run')) {
+      const picks = key.split(/[\s,+]+/).filter(Boolean);
+      if (!picks.length) return text(powershellScript());
+      if (picks.length === 1 && /^(a|all)$/i.test(picks[0])) return text(powershellScript(true));
+      return text(powershellScript(picks.join(' ')));
+    }
 
     const it = bySlug[key] || byNum[key];
     if (!it) return text(`Unknown: "${key}"\n\n${menu()}`, 404);
@@ -86,8 +109,9 @@ Download one (file name and extension come from the proxy)
   curl -LOJ ${HOST}/d/<name>          skip the proxy, go straight to the vendor
 
 Pick several from a menu
-  Windows (downloads and installs)   iwr ${HOST}/i|iex  or  irm ${HOST} | iex
-  Windows, install everything        iwr ${HOST}/ia|iex  or  irm ${HOST}/all | iex
+  Windows (downloads and installs)   iwr get.harry.run/i|iex
+  Windows, install everything        iwr get.harry.run/ia|iex
+  Windows, add 'harry' shortcut      iwr get.harry.run/prof|iex
   Linux / macOS                      curl -fsSL ${HOST} | bash
   Linux / macOS, download everything curl -fsSL ${HOST}/all | bash
 `;
@@ -139,8 +163,14 @@ echo; echo "Done. Files are in $(pwd)"
 }
 
 // ---------- interactive: Windows PowerShell (iwr get.harry.run/i|iex) ----------
-function powershellScript(all = false) {
-  return String.raw`# get.harry.run - pick apps by number, download and install (Windows)
+function powershellScript(preset = false) {
+  const askBlock = preset === true
+    ? ASK_ALL
+    : typeof preset === 'string'
+      ? `$pick = "${preset.replace(/"/g, '')}"\n$install = $true`
+      : ASK_MENU;
+
+  return String.raw`# get.harry.run - pick apps by number or slug, download and install (Windows)
 $H = "__HOST__"
 if (-not (Get-Command curl.exe -ErrorAction SilentlyContinue)) { Write-Host "curl.exe not found (it ships with Windows 10 and 11)." -ForegroundColor Red; return }
 $items = [ordered]@{}
@@ -157,8 +187,9 @@ $dir = $here
 if ($install) { $dir = Join-Path $env:TEMP "get-harry-run"; New-Item -ItemType Directory -Force $dir | Out-Null }
 
 foreach ($n in ($pick -split "[\s,]+" | Where-Object { $_ })) {
-  if (-not $items.Contains($n)) { Write-Host "Skipping invalid choice: $n" -ForegroundColor Yellow; continue }
   $it = $items[$n]
+  if (-not $it) { $it = $items.Values | Where-Object { $_[1] -eq $n } | Select-Object -First 1 }
+  if (-not $it) { Write-Host "Skipping invalid choice: $n" -ForegroundColor Yellow; continue }
   Write-Host ""; Write-Host ("-> " + $it[2]) -ForegroundColor Cyan
   if ($it[4]) {
     if (-not $install) { Write-Host "   tweak skipped (only runs when installing)" -ForegroundColor Yellow; continue }
@@ -192,7 +223,7 @@ foreach ($n in ($pick -split "[\s,]+" | Where-Object { $_ })) {
 if ($install) { Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue }
 if ($tweaked) { Write-Host ""; Write-Host "Restarting Explorer to apply tweaks..."; Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue }
 Write-Host ""; Write-Host "Finished." -ForegroundColor Green
-`.replace('@@ASK@@', () => (all ? ASK_ALL : ASK_MENU)).replaceAll('__HOST__', HOST);
+`.replace('@@ASK@@', () => askBlock).replaceAll('__HOST__', HOST);
 }
 
 const ASK_ALL = String.raw`$admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -231,7 +262,7 @@ function page() {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>get.harry.run</title><meta name="color-scheme" content="light dark"><meta name="referrer" content="no-referrer">
+<title>get.harry.run</title><meta name="color-scheme" content="light dark">
 <style>
 :root{--bg:#f4f7f7;--ink:#10242b;--mute:#5d7378;--line:#d7e2e2;--code:#e4edee;--acc:#0a7b83;--accink:#fff}
 @media (prefers-color-scheme:dark){:root{--bg:#0f1a1c;--ink:#e6f1f1;--mute:#8aa5a8;--line:#223436;--code:#152527;--acc:#4fcfc6;--accink:#06201f}}
@@ -259,7 +290,7 @@ ol{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
 .item:hover .n{color:var(--acc)}
 .name{font-size:1.18rem;font-weight:650;letter-spacing:-.01em}
 .slug{color:var(--mute);font-size:.86rem}
-.dl{border:0;font:inherit;font-weight:700;cursor:pointer;background:var(--acc);color:var(--accink);text-decoration:none;font-weight:700;padding:10px 20px;border-radius:10px}
+.dl{border:0;font:inherit;font-weight:700;cursor:pointer;background:var(--acc);color:var(--accink);text-decoration:none;padding:10px 20px;border-radius:10px}
 .dl:hover{filter:brightness(1.08)}
 .cmds{display:none;padding:0 0 20px 78px}
 .cmds code{display:block;margin-top:6px;padding:8px 12px;border-radius:8px;background:var(--code)}
@@ -275,7 +306,7 @@ footer{margin-top:36px;color:var(--mute);font-size:.88rem}footer a{color:var(--i
 <p>In the menu type several numbers, like 1 3 4, or all. On Windows it installs them.</p>
 <div class="line"><span>Windows</span><code title="Click to copy">iwr get.harry.run/i|iex</code></div>
 <div class="line"><span>Windows, all</span><code title="Click to copy">iwr get.harry.run/ia|iex</code></div>
-<div class="line"><span>One-time Setup</span><code title="Click to copy">iwr get.harry.run/prof|iex</code></div>
+<div class="line"><span>Add 'harry' cmd</span><code title="Click to copy">iwr get.harry.run/prof|iex</code></div>
 <div class="line"><span>Linux / macOS</span><code title="Click to copy">curl -fsSL ${HOST} | bash</code></div>
 </div>
 <ol>${rows}</ol><p class="empty" id="e">Nothing matches that search.</p>
